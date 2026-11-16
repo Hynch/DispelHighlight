@@ -1,14 +1,13 @@
 ## Interface: 16001
 ## Title: Dispel Highlight
 ## Notes: Highlights party/raid frames of members with a debuff YOU can dispel, colored by school, with an optional sound.
-## Author: You
-## Version: 1.2.0
+## Author: Hynch
+## Version: 1.0.0
 ## SavedVariables: DispelHighlightDB
 ## IconTexture: Interface\Icons\Spell_Holy_DispelMagic
 ## AddonCompartmentFunc: DispelHighlight_OnAddonCompartmentClick
 ## AddonCompartmentFuncOnEnter: DispelHighlight_OnAddonCompartmentEnter
 ## AddonCompartmentFuncOnLeave: DispelHighlight_OnAddonCompartmentLeave
-## OptionalDeps: Cell, Grid2, ElvUI
 
 DispelHighlight.lua
 Options.lua
