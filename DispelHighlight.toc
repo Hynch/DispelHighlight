@@ -2,7 +2,7 @@
 ## Title: Dispel Highlight
 ## Notes: Highlights party/raid frames of members with a debuff YOU can dispel, colored by school, with an optional sound.
 ## Author: Hynch
-## Version: 1.0.0
+## Version: 1.0.2
 ## SavedVariables: DispelHighlightDB
 ## IconTexture: Interface\Icons\Spell_Holy_DispelMagic
 ## AddonCompartmentFunc: DispelHighlight_OnAddonCompartmentClick

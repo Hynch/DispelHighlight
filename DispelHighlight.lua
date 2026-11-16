@@ -11,8 +11,6 @@ local defaults = {
     sound     = "alarm",   -- preset name, numeric SoundKit ID, file path, or "off"
     thickness = 2,
     fill      = true,      -- faint colored fill inside the border
-    override  = nil,       -- manual list of dispel types, e.g. { Magic = true }
-    sounds    = {},        -- per-school overrides: { Magic = "bell", Poison = 8959, ... }
     hideMinimap  = false,  -- hide the minimap button
     minimapAngle = 215,    -- minimap button position (degrees)
 }
@@ -25,15 +23,6 @@ local COLORS = {
     Unknown = { 1.00, 0.55, 0.00 },   -- dispellable, but type hidden by the client
 }
 
-local SCHOOLS = { "Magic", "Curse", "Poison", "Disease", "Unknown" }
-
-local function MatchSchool(word)
-    if not word or word == "" then return nil end
-    local w = word:sub(1, 1):upper() .. word:sub(2):lower()
-    if w == "Other" then return "Unknown" end
-    return COLORS[w] and w or nil
-end
-
 -- Sound presets (numeric SoundKit IDs). Add your own, or use /dh sound <id|path>.
 local PRESETS = {
     alarm     = 12889,
@@ -43,8 +32,7 @@ local PRESETS = {
     quest     = 618,
 }
 
--- Spell IDs (all ranks) that grant each dispel type. Edit if Forever changes them.
--- If detection ever misses something, use /dh types Magic Poison ... to override.
+-- Spell IDs (all ranks) that grant each dispel type. Used only for the "You can dispel" display.
 local DISPEL_SPELLS = {
     PRIEST  = { Magic = { 527, 988 },  Disease = { 528, 552 } },
     PALADIN = { Magic = { 4987 },      Poison = { 1152, 4987 }, Disease = { 1152, 4987 } },
@@ -74,11 +62,7 @@ local function Known(id)
 end
 
 local function RefreshDispelTypes()
-    wipe(myTypes)
-    if db.override then
-        for t in pairs(db.override) do myTypes[t] = true end
-        return
-    end
+    wipe(myTypes)   -- used for display only; the client decides what is dispellable
     local _, class = UnitClass("player")
     local map = DISPEL_SPELLS[class]
     if not map then return end
@@ -104,33 +88,69 @@ local function SafeDispelName(d)
     return ok and n or nil
 end
 
-local function FindDispellable(unit)
-    if not C_UnitAuras then return nil end
+-- Dispel type IDs used by the color curve (Enum.SpellDispelType when available).
+local E = Enum and Enum.SpellDispelType
+local TYPE_ID = {
+    Magic   = (E and E.Magic)   or 1,
+    Curse   = (E and E.Curse)   or 2,
+    Disease = (E and E.Disease) or 3,
+    Poison  = (E and E.Poison)  or 4,
+}
 
-    -- Preferred: let the client decide what I can dispel.
-    if C_UnitAuras.GetAuraDataByIndex then
-        local ok, d = pcall(C_UnitAuras.GetAuraDataByIndex, unit, 1, "HARMFUL|RAID_PLAYER_DISPELLABLE")
-        if ok then
-            if not d then return nil end
-            local n = SafeDispelName(d)
-            if n then
-                -- readable type: also respect my own known dispels / manual override
-                if next(myTypes) and not myTypes[n] then return nil end
-                return n
+-- A curve that maps a dispel type ID to our school colors. The client evaluates it,
+-- so it works even when the aura's type is hidden from addons in combat.
+local colorCurve
+local function GetColorCurve()
+    if colorCurve ~= nil then return colorCurve or nil end
+    colorCurve = false
+    if C_CurveUtil and C_CurveUtil.CreateColorCurve and Enum and Enum.LuaCurveType then
+        local ok, curve = pcall(function()
+            local c = C_CurveUtil.CreateColorCurve()
+            c:SetType(Enum.LuaCurveType.Step)
+            local u = COLORS.Unknown
+            c:AddPoint(0, CreateColor(u[1], u[2], u[3], 1))
+            for name, id in pairs(TYPE_ID) do
+                local col = COLORS[name]
+                c:AddPoint(id, CreateColor(col[1], col[2], col[3], 1))
             end
-            return "Unknown"   -- client says dispellable, but type is hidden
-        end
+            c:AddPoint(5, CreateColor(u[1], u[2], u[3], 1))   -- anything else (bleed, enrage...)
+            return c
+        end)
+        if ok and curve then colorCurve = curve end
     end
+    return colorCurve or nil
+end
 
-    -- Fallback: scan debuffs and match against the spells I know.
-    if not next(myTypes) or not C_UnitAuras.GetDebuffDataByIndex then return nil end
-    for i = 1, 40 do
-        local d = C_UnitAuras.GetDebuffDataByIndex(unit, i)
-        if not d then break end
-        local n = SafeDispelName(d)
-        if n and myTypes[n] then return n end
+-- Returns auraInstanceID, dispelType
+--   auraInstanceID: first harmful aura on the unit that I can dispel (nil if none)
+--   dispelType: "Magic"/"Curse"/... when readable, nil when hidden in combat
+-- Only vector-returning APIs are used here: they stay available in combat,
+-- unlike the index/name/spell lookups.
+local function FindDispellable(unit)
+    if not (C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs) then return nil end
+    local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+    if not ok or type(ids) ~= "table" or #ids == 0 then return nil end
+    local id = ids[1]
+    local dtype
+    if C_UnitAuras.GetAuraDataByInstanceID then
+        local ok2, d = pcall(C_UnitAuras.GetAuraDataByInstanceID, unit, id)
+        if ok2 and d then dtype = SafeDispelName(d) end
     end
-    return nil
+    return id, dtype
+end
+
+-- Returns r, g, b for the highlight (values may be "secret"; only pass them to widgets).
+local function ColorFor(unit, id, dtype)
+    local curve = GetColorCurve()
+    if curve and C_UnitAuras.GetAuraDispelTypeColor then
+        local ok, r, g, b = pcall(function()
+            local col = C_UnitAuras.GetAuraDispelTypeColor(unit, id, curve)
+            if col then return col:GetRGBA() end
+        end)
+        if ok and r then return r, g, b end
+    end
+    local c = COLORS[dtype or "Unknown"] or COLORS.Unknown
+    return c[1], c[2], c[3]
 end
 
 ----------------------------------------------------------------------
@@ -164,8 +184,13 @@ local function MakeOverlay(f)
     o:SetFrameLevel((f:GetFrameLevel() or 1) + 10)
     o:EnableMouse(false)
     o.edges = {}
-    for i = 1, 4 do o.edges[i] = o:CreateTexture(nil, "OVERLAY") end
+    -- White textures, tinted per-show with SetVertexColor (which accepts secret values).
+    for i = 1, 4 do
+        o.edges[i] = o:CreateTexture(nil, "OVERLAY")
+        o.edges[i]:SetColorTexture(1, 1, 1, 1)
+    end
     o.fill = o:CreateTexture(nil, "BACKGROUND")
+    o.fill:SetColorTexture(1, 1, 1, 1)
     o.fill:SetAllPoints(o)
     o:Hide()
     return o
@@ -180,13 +205,13 @@ local function Layout(o)
     e[4]:ClearAllPoints(); e[4]:SetPoint("TOPRIGHT");    e[4]:SetPoint("BOTTOMRIGHT");  e[4]:SetWidth(t)
 end
 
-local function Show(f, dtype)
+local function Show(f, r, g, b)
     local o = overlays[f]
     if not o then o = MakeOverlay(f); overlays[f] = o end
-    local c = COLORS[dtype]
     Layout(o)
-    for i = 1, 4 do o.edges[i]:SetColorTexture(c[1], c[2], c[3], 1) end
-    o.fill:SetColorTexture(c[1], c[2], c[3], db.fill and 0.22 or 0)
+    for i = 1, 4 do o.edges[i]:SetVertexColor(r, g, b) end
+    o.fill:SetVertexColor(r, g, b)
+    o.fill:SetAlpha(db.fill and 0.22 or 0)
     o:Show()
 end
 
@@ -205,9 +230,8 @@ local function NormalizeSound(text)
     return tonumber(text) or text
 end
 
--- dtype (optional): use that school's sound, falling back to the default sound.
-local function PlayAlert(force, dtype)
-    local s = (dtype and db.sounds and db.sounds[dtype]) or db.sound
+local function PlayAlert(force)
+    local s = db.sound
     if not s or s == "off" then return end
     local now = GetTime()
     if not force and now - lastSound < 1.5 then return end
@@ -230,20 +254,28 @@ local function UpdateFrame(f)
        or not UnitIsFriend("player", unit) or UnitIsDeadOrGhost(unit) then
         Hide(f) return
     end
-    local dtype = FindDispellable(unit)
-    if dtype then Show(f, dtype) else Hide(f) end
+    local id, dtype = FindDispellable(unit)
+    if id then
+        local r, g, b = ColorFor(unit, id, dtype)
+        Show(f, r, g, b)
+    else
+        Hide(f)
+    end
 end
 
 local function UpdateUnit(unit)
-    local dtype = (db.enabled and UnitExists(unit) and UnitIsFriend("player", unit)) and FindDispellable(unit) or nil
-    local guid = UnitGUID(unit)
-    if guid then
-        if dtype and alerted[guid] ~= dtype then
-            alerted[guid] = dtype
-            PlayAlert(false, dtype)
-        elseif not dtype then
-            alerted[guid] = nil
+    local id
+    if db.enabled and UnitExists(unit) and UnitIsFriend("player", unit) then
+        id = FindDispellable(unit)
+    end
+    -- Sound once per new dispellable aura.
+    if id then
+        if alerted[unit] ~= id then
+            alerted[unit] = id
+            PlayAlert(false)
         end
+    else
+        alerted[unit] = nil
     end
     for _, name in ipairs(frameNames) do
         local f = GetFrameByName(name)
@@ -315,17 +347,14 @@ ns.PRESETS     = PRESETS
 ns.PlayAlert   = PlayAlert
 ns.UpdateAll   = UpdateAll
 ns.TypesString = TypesString
-ns.COLORS         = COLORS
-ns.SCHOOLS        = SCHOOLS
-ns.MatchSchool    = MatchSchool
 ns.NormalizeSound = NormalizeSound
 
-function ns.Test(dtype)
-    dtype = dtype or "Magic"
-    PlayAlert(true, dtype)
+function ns.Test()
+    PlayAlert(true)
     local f = _G["PlayerFrame"]
     if f then
-        Show(f, dtype)
+        local c = COLORS.Magic
+        Show(f, c[1], c[2], c[3])
         C_Timer.After(2, function() UpdateAll() end)
     end
 end
@@ -353,32 +382,16 @@ SlashCmdList["DISPELHIGHLIGHT"] = function(msg)
         ns.SetEnabled(not db.enabled)
         Print(db.enabled and "enabled" or "disabled")
     elseif cmd == "sound" then
-        local first, val = rest:match("^(%S+)%s*(.-)$")
-        local school = MatchSchool(first)
-        if not first then
-            Print("default sound: " .. tostring(db.sound))
-            for _, s in ipairs(SCHOOLS) do
-                Print("  " .. s .. ": " .. tostring(db.sounds[s] or "default"))
-            end
-        elseif school then
-            if val == "" then
-                Print(school .. " sound: " .. tostring(db.sounds[school] or "default"))
-            elseif val:lower() == "default" then
-                db.sounds[school] = nil
-                Print(school .. " sound reset to default")
-            else
-                db.sounds[school] = NormalizeSound(val)
-                Print(school .. " sound set to: " .. tostring(db.sounds[school]))
-                PlayAlert(true, school)
-            end
+        if rest == "" then
+            Print("current sound: " .. tostring(db.sound))
         else
             db.sound = NormalizeSound(rest)
-            Print("default sound set to: " .. tostring(db.sound))
+            Print("sound set to: " .. tostring(db.sound))
             PlayAlert(true)
+            if ns.RefreshOptions then ns.RefreshOptions() end
         end
-        if ns.RefreshOptions then ns.RefreshOptions() end
     elseif cmd == "test" then
-        ns.Test(MatchSchool(rest))
+        ns.Test()
     elseif cmd == "thickness" then
         local n = tonumber(rest)
         if n and n >= 1 and n <= 8 then db.thickness = n; UpdateAll() else Print("usage: /dh thickness 1-8") end
@@ -386,23 +399,8 @@ SlashCmdList["DISPELHIGHLIGHT"] = function(msg)
         db.fill = not db.fill
         Print("fill " .. (db.fill and "on" or "off"))
         UpdateAll()
-    elseif cmd == "types" then
-        if rest == "" or rest:lower() == "auto" then
-            db.override = nil
-            RefreshDispelTypes()
-            Print("auto-detect on. I can dispel: " .. TypesString())
-        else
-            db.override = {}
-            for word in rest:gmatch("%a+") do
-                local w = word:sub(1, 1):upper() .. word:sub(2):lower()
-                if COLORS[w] then db.override[w] = true end
-            end
-            RefreshDispelTypes()
-            Print("manual override. I can dispel: " .. TypesString())
-        end
-        UpdateAll()
     else
         Print("I can dispel: " .. TypesString())
-        Print("/dh (options) | minimap | toggle | sound [school] <alarm|raid|ready|bell|quest|id|path|off|default> | test [school] | thickness <1-8> | fill | types [auto | Magic Poison ...]")
+        Print("/dh (options) | minimap | toggle | sound <alarm|raid|ready|bell|quest|id|path|off> | test | thickness <1-8> | fill")
     end
 end

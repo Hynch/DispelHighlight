@@ -91,7 +91,7 @@ local function BuildPanel()
         function(v) db.thickness = v; ns.UpdateAll() end)
 
     -- Sound
-    MakeLabel(panel, "Default sound", "GameFontHighlight", 20, -226)
+    MakeLabel(panel, "Alert sound", "GameFontHighlight", 20, -226)
     soundLabel = MakeLabel(panel, "", "GameFontHighlightSmall", 110, -228)
 
     local presets = { "alarm", "raid", "ready", "bell", "quest", "off" }
@@ -124,54 +124,6 @@ local function BuildPanel()
     MakeButton("Apply", 60, 296, -300, ApplyCustom)
 
     MakeButton("Test", 80, 16, -340, function() ns.Test() end)
-
-    -- Per-school sounds
-    MakeLabel(panel, "Per-school sounds", "GameFontHighlight", 20, -384)
-    MakeLabel(panel, "Preset name, SoundKit ID, file path, \"off\", or \"default\" to use the default sound.",
-        "GameFontHighlightSmall", 20, -402)
-
-    local cycle = { "default", "alarm", "raid", "ready", "bell", "quest", "off" }
-    for i, school in ipairs(ns.SCHOOLS) do
-        local y = -426 - (i - 1) * 30
-        local c = ns.COLORS[school]
-        local lbl = MakeLabel(panel, school == "Unknown" and "Other" or school, "GameFontNormal", 20, y - 4)
-        lbl:SetTextColor(c[1], c[2], c[3])
-
-        local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-        box:SetSize(140, 22)
-        box:SetPoint("TOPLEFT", 106, y)
-        box:SetAutoFocus(false)
-        box:SetScript("OnEscapePressed", box.ClearFocus)
-
-        local function SetSchoolSound(v)
-            v = strtrim(tostring(v or ""))
-            if v == "" or v:lower() == "default" then
-                db.sounds[school] = nil
-            else
-                db.sounds[school] = ns.NormalizeSound(v)
-                ns.PlayAlert(true, school)
-            end
-            ns.RefreshOptions()
-        end
-
-        box:SetScript("OnEnterPressed", function(self)
-            SetSchoolSound(self:GetText())
-            self:ClearFocus()
-        end)
-
-        MakeButton("Next", 50, 258, y, function()
-            local cur = tostring(db.sounds[school] or "default")
-            local idx = 0
-            for k, name in ipairs(cycle) do if name == cur then idx = k break end end
-            SetSchoolSound(cycle[(idx % #cycle) + 1])
-        end)
-        MakeButton("Test", 50, 312, y, function() ns.Test(school) end)
-
-        widgets[#widgets + 1] = function()
-            if not box:HasFocus() then box:SetText(tostring(db.sounds[school] or "default")) end
-            box:SetCursorPosition(0)
-        end
-    end
 end
 
 function ns.RefreshOptions()
