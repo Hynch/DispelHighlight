@@ -1,8 +1,9 @@
 ## Interface: 16001
 ## Title: Dispel Highlight
-## Notes: Highlights party/raid frames of members with a debuff YOU can dispel, colored by school, with an optional sound.
+## Notes: Highlights party/raid frames of members with a debuff YOU can dispel, colored by school. Works in combat.
 ## Author: Hynch
-## Version: 1.0.2
+## Version: 1.0.0
+## X-Website: https://www.curseforge.com/wow/addons/hynchs-dispel-highlight
 ## SavedVariables: DispelHighlightDB
 ## IconTexture: Interface\Icons\Spell_Holy_DispelMagic
 ## AddonCompartmentFunc: DispelHighlight_OnAddonCompartmentClick

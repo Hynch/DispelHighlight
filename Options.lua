@@ -68,17 +68,15 @@ local function MakeButton(label, w, x, y, onClick)
     return b
 end
 
-local soundLabel, typesLabel, soundBox
 
 local function BuildPanel()
     MakeLabel(panel, "Dispel Highlight", "GameFontNormalLarge", 16, -16)
-    typesLabel = MakeLabel(panel, "", "GameFontHighlightSmall", 16, -42)
 
     MakeCheckbox("Enable addon", 16, -66,
         function() return db.enabled end,
         function(v) ns.SetEnabled(v) end)
 
-    MakeCheckbox("Tint the frame (faint fill inside the border)", 16, -96,
+    MakeCheckbox("Tint the frame (colored fill inside the border)", 16, -96,
         function() return db.fill end,
         function(v) db.fill = v; ns.UpdateAll() end)
 
@@ -90,53 +88,66 @@ local function BuildPanel()
         function() return db.thickness end,
         function(v) db.thickness = v; ns.UpdateAll() end)
 
-    -- Sound
-    MakeLabel(panel, "Alert sound", "GameFontHighlight", 20, -226)
-    soundLabel = MakeLabel(panel, "", "GameFontHighlightSmall", 110, -228)
+    MakeSlider("Tint opacity (%)", 20, -226, 5, 100,
+        function() return db.fillAlpha or 25 end,
+        function(v) db.fillAlpha = v; ns.UpdateAll() end)
 
-    local presets = { "alarm", "raid", "ready", "bell", "quest", "off" }
-    local x = 16
-    for _, name in ipairs(presets) do
-        MakeButton(name, 58, x, -248, function()
-            db.sound = name
-            if name ~= "off" then ns.PlayAlert(true) end
-            ns.RefreshOptions()
-        end)
-        x = x + 62
-    end
+    MakeButton("Preview", 80, 16, -282, function() ns.Test() end)
 
-    MakeLabel(panel, "Custom sound (SoundKit ID or file path):", "GameFontHighlightSmall", 20, -284)
-    soundBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-    soundBox:SetSize(260, 22)
-    soundBox:SetPoint("TOPLEFT", 26, -300)
-    soundBox:SetAutoFocus(false)
-    soundBox:SetScript("OnEscapePressed", soundBox.ClearFocus)
-    local function ApplyCustom()
-        local t = strtrim(soundBox:GetText() or "")
-        if t ~= "" then
-            db.sound = ns.NormalizeSound(t)
-            ns.PlayAlert(true)
-            ns.RefreshOptions()
-        end
-        soundBox:ClearFocus()
-    end
-    soundBox:SetScript("OnEnterPressed", ApplyCustom)
-    MakeButton("Apply", 60, 296, -300, ApplyCustom)
+    -- Footer: author and version, read from the .toc so they never go out of date.
+    local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+    local author  = (getMeta and getMeta(ADDON, "Author"))  or "Hynch"
+    local version = (getMeta and getMeta(ADDON, "Version")) or ""
 
-    MakeButton("Test", 80, 16, -340, function() ns.Test() end)
+    local line = panel:CreateTexture(nil, "ARTWORK")
+    line:SetColorTexture(1, 1, 1, 0.12)
+    line:SetHeight(1)
+    line:SetPoint("BOTTOMLEFT", 16, 50)
+    line:SetPoint("BOTTOMRIGHT", -16, 50)
+
+    local by = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    by:SetPoint("BOTTOMLEFT", 16, 30)
+    by:SetText("Created by " .. author)
+
+    local ver = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    ver:SetPoint("BOTTOMLEFT", 16, 16)
+    ver:SetText(version ~= "" and ("v" .. version) or "")
+
+    -- Link: WoW can't open web pages, so show a read-only box the user can copy from.
+    local URL = "https://www.curseforge.com/wow/addons/hynchs-dispel-highlight"
+    local linkLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    linkLabel:SetPoint("BOTTOMLEFT", 180, 34)
+    linkLabel:SetText("CurseForge page (click, then Ctrl+C to copy):")
+
+    local box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+    box:SetSize(380, 20)
+    box:SetPoint("BOTTOMLEFT", 186, 10)
+    box:SetAutoFocus(false)
+    box:SetFontObject("GameFontHighlightSmall")
+    box:SetText(URL)
+    box:SetCursorPosition(0)
+    box:SetScript("OnTextChanged", function(self, user)
+        if user then self:SetText(URL); self:HighlightText() end   -- read-only
+    end)
+    box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 end
 
 function ns.RefreshOptions()
-    if not db or not soundLabel then return end
+    if not db then return end
     for _, fn in ipairs(widgets) do fn() end
-    soundLabel:SetText("current: " .. tostring(db.sound))
-    typesLabel:SetText("You can dispel: " .. ns.TypesString())
 end
 
 panel:SetScript("OnShow", function() ns.RefreshOptions() end)
 
 local category
 function ns.OpenOptions()
+    -- The game's settings window is protected and cannot be opened by addons in combat.
+    if InCombatLockdown() then
+        ns.Print("the options can't be opened in combat. Try again once combat ends.")
+        return
+    end
     if Settings and Settings.OpenToCategory and category then
         Settings.OpenToCategory(category:GetID())
     elseif InterfaceOptionsFrame_OpenToCategory then
@@ -191,7 +202,6 @@ local function Tooltip(owner, anchor)
     GameTooltip:SetOwner(owner, anchor or "ANCHOR_LEFT")
     GameTooltip:AddLine("Dispel Highlight")
     GameTooltip:AddLine(db.enabled and "|cff00ff00Enabled|r" or "|cffff4040Disabled|r", 1, 1, 1)
-    GameTooltip:AddLine("Can dispel: " .. ns.TypesString(), 0.8, 0.8, 0.8)
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("Left-click: open options", 1, 1, 1)
     GameTooltip:AddLine("Right-click: enable / disable", 1, 1, 1)
